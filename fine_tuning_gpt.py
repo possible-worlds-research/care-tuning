@@ -3,18 +3,20 @@
 Usage:
   fine_tuning_gpt.py tune --model=<path> --data=<path> --size=<numsents> [--start=<n>]
   fine_tuning_gpt.py test --model=<path>
+  fine_tuning_gpt.py livetune --model=<path>
   fine_tuning_gpt.py (-h | --help)
   fine_tuning_got.py --version
 
 Options:
-  -h --help     Show this screen.
-  --version     Show version.
-  tune          Launch fine-tuning process.
-  test          Generate some text.
-  --data=<path>        Path of data for fine-tuning.
-  --size=<numsents>        How much of the data to use in fine-tuning (in sentences).
+  -h --help         Show this screen.
+  --version         Show version.
+  tune              Launch fine-tuning process on corpus.
+  test              Converse with human
+  livetune          Fine-tune model during conversation.
+  --data=<path>     Path of data for fine-tuning.
+  --size=<numsents> How much of the data to use in fine-tuning (in sentences).
   --start=<n>       Optional: where to start in the corpus (in number of sentences).
-  --model=<path>       Path of model *directory* (to further tune or to test on).
+  --model=<path>    Path of model *directory* (to further tune or to test on).
 
 """
 
@@ -23,9 +25,14 @@ import logging, os
 logging.disable(logging.WARNING)
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
+import re
+import string
 import sys
 import random
 import math
+from os.path import join
+from pathlib import Path
+from datetime import datetime
 from docopt import docopt
 from time import sleep
 import collections
@@ -43,6 +50,7 @@ from transformers import pipeline
 from transformers import TextDataset,DataCollatorForLanguageModeling
 from datasets import Dataset, load_dataset
 
+family = {"BOT":"<bot'(x)>", "HUM":"<human'(x)>"}
 
 def read_corpus(filename, size=1000, start=None):
     corpus = []
@@ -147,23 +155,88 @@ def fine_tune(model, lm_dataset, lr=0.00001):
 
 
 def predict(prompt, m, t):
-    pp = pipeline('text-generation', model=m, tokenizer=t, config={'max_length':15})
-    print('\n',pp(prompt)[0]['generated_text'].replace('\n',' '))
+    pp = pipeline('text-generation', model=m, tokenizer=t, config={'max_length':20})
+    answer = pp(prompt)[0]['generated_text'].replace('\n',' ')[len(prompt):] #don't repeat prompt
+    #print("PROMPT",prompt)
+    #print("ANSWER",answer)
+    answer = answer.split('</u>')[0]
+    return answer
+
+
+def resolve_indexicals(conversation):
+    #print("RESOLVING INDEXICALS IN",conversation)
+    resolved = ""
+    speakers = re.findall('<u speaker=(...)>', conversation)
+    turns = re.split('</u>', conversation)
+    for turn in turns:
+        try:
+            speaker = re.findall('<u speaker=(...)>', turn)[0]
+        except:
+            continue
+        interlocutor = [s for s in speakers if s != speaker][0]
+        utterance = re.sub('<u speaker=(...)>', '', turn)
+        if utterance.isspace() or utterance == '':
+            continue
+        if utterance.startswith('I '):
+            utterance = family[speaker] + utterance[2:]
+        if ' I ' in utterance:
+            utterance = utterance.replace(' I ', f' {family[speaker]} ')
+        for p in ['.',',',';',':','?','!']:
+            if ' me'+p in utterance:
+                utterance = utterance.replace(' me'+p,  f' {family[speaker]}'+p)
+        if utterance.startswith('You '):
+            utterance = interlocutor + utterance[4:]
+        if ' you ' in utterance:
+            utterance = utterance.replace(' you ', f' {family[interlocutor]} ')
+        for p in ['.',',',';',':','?','!']:
+            if ' you'+p in utterance:
+                utterance = utterance.replace(' you'+p,  f' {family[interlocutor]}'+p)
+        resolved+='<u speaker='+speaker+'>'+utterance+'</u>'
+    #print("RESOLVED:", resolved)
+    return resolved
+
 
 
 def fine_tune_during_conversation(model):
-    text = input("FT >> ").rstrip('\n')
+    date_string = f'{datetime.now():%Y-%m-%d %H:%M}'
+    conversation = open(join('data','conversations', date_string+'.txt'),'w')
+    training_data = ""
 
-    while text != 'q':
-        if len(text.split()) < chunk_size:
-            text = input("LONGER FT >> ").rstrip('\n')
+    human = input("Please enter your 3-letter speaker code: ").rstrip('\n')
 
-        lm_dataset = process_text([text])
-        print("\n>> Now fine-tuning...\n")
-        model = fine_tune(model, lm_dataset, lr=0.000001)
-        text = input("TEST >> ").rstrip('\n')
-        predict(text, model, tokenizer)
-        text = input("FT >> ").rstrip('\n')
+    turns = []
+    answer = '<u speaker=BOT>Hello!</u>'
+    turns.append(answer)
+    prompt = input(human+">> ").rstrip('\n')
+    if prompt != 'q':
+        prompt = '<u speaker='+human+'>'+prompt+'</u><u speaker=BOT>'
+
+    while prompt != 'q':
+        prompt_no_markers = prompt.replace('XXX ','') #Turn 0
+        answer = predict(prompt_no_markers, model, tokenizer) #Turn 1
+        print("BOT>> "+answer)
+        turns.append(prompt_no_markers.replace('<u speaker=BOT>',''))
+        turns.append('<u speaker=BOT>'+answer+'</u>')
+        if 'XXX ' in prompt:
+            #anticipating what the human said
+            turns[0] = prompt_no_markers.replace('<u speaker=BOT>','').replace('='+human,'=BOT')
+        training_data+=''.join(turns[:2])
+        turns.clear()
+        turns.append('<u speaker=BOT>'+answer+'</u>')
+        prompt = input(human+">> ").rstrip('\n')
+        if prompt != 'q':
+            prompt = '<u speaker='+human+'>'+prompt+'</u><u speaker=BOT>'
+        if len(training_data) > 200:
+            training_data = resolve_indexicals(training_data)
+            training_data = training_data.replace('</u><u speaker='+human, '</u>\n<u speaker='+human)
+            conversation.write(training_data)
+            #lm_dataset = process_text([training_data])
+            #model = fine_tune(model, lm_dataset, lr=0.000001)
+            training_data = ""
+    training_data = resolve_indexicals(training_data)
+    training_data = training_data.replace('</u><u speaker='+human, '</u>\n<u speaker='+human)
+    conversation.write(training_data)
+    conversation.close()
 
 
 def fine_tune_from_corpus(model, corpus_path, size=1000, start=None):
@@ -177,9 +250,9 @@ def fine_tune_from_corpus(model, corpus_path, size=1000, start=None):
         tokenized_dataset = sample.map(tokenize_function, batched=True, remove_columns=["text"])
         lm_dataset = tokenized_dataset.map(group_texts, batched=True)
 
-        print("\n>> Now fine-tuning...\n")
+        #print("\n>> Now fine-tuning...\n")
         ft_model = fine_tune(model, lm_dataset)
-        print("\n>> Finished fine-tuning.\n")
+        #print("\n>> Finished fine-tuning.\n")
         return ft_model
     
     corpus = read_corpus(corpus_path, size=size, start=start)
@@ -187,9 +260,14 @@ def fine_tune_from_corpus(model, corpus_path, size=1000, start=None):
 
     for i in range(0,len(corpus),iter_size):
         try:
-            print(">>>",i,corpus[i])
+            print("\n>>>",i,'\n'.join(corpus[i:i+iter_size]))
             model = ft_iter(model, corpus[i:i+iter_size], iter_size)
-            predict(' '.join(corpus[i].split()[:5]), model, tokenizer)
+            if corpus[i].startswith('<u speaker'):
+                prompt = corpus[i].split('</u>')[0]+'</u><u speaker=BOT>'
+                answer = predict(prompt, model, tokenizer)
+            else:
+                answer = predict(' '.join(corpus[i].split()[:5]), model, tokenizer)
+            print(answer)
             sleep(10)
         except:
             print("ERROR >>>",corpus[i])
@@ -198,16 +276,21 @@ def fine_tune_from_corpus(model, corpus_path, size=1000, start=None):
 
 def chat(ft_model):
     text = input(">> ").rstrip('\n')
+    text = '<u speaker=HUM>'+text+'</u><u speaker=BOT>'
 
     while text != 'q':
-        predict(text, ft_model, tokenizer)
+        answer = predict(text, ft_model, tokenizer)
+        print(answer)
         text = input(">> ").rstrip('\n')
+        if text != 'q':
+            text = '<u speaker=HUM>'+text+'</u><u speaker=BOT>'
 
 
 if __name__ == "__main__":
     args = docopt(__doc__, version='GPT2 Fine-tuning v0.1')
     print(args)
     
+    Path("data/conversations/").mkdir(parents=True, exist_ok=True)
     orig_model_checkpoint = "gpt2"
 
     if os.path.isdir(args['--model']):
@@ -216,7 +299,7 @@ if __name__ == "__main__":
     else:
         model_checkpoint = "gpt2"
         print("Loading standard gpt2 model.")
-    chunk_size = 20
+    chunk_size = 30
     model = AutoModelForCausalLM.from_pretrained(model_checkpoint)
     tokenizer = AutoTokenizer.from_pretrained(orig_model_checkpoint)
     data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False, return_tensors="pt")
@@ -234,4 +317,7 @@ if __name__ == "__main__":
     if args['test']:
         chat(model)
 
+
+    if args['livetune']:
+        fine_tune_during_conversation(model)
 
