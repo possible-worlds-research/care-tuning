@@ -41,10 +41,10 @@ def extract_rd_for_training(fpath, activity=None):
                 if c != 0:
                     f.write(f"</a>\n")
                 c = idx
-                f.write(f"<a type=OBS>\n")
+                f.write(f"<a type=OBS idx={idx}>\n")
             for region in img['regions']:
                 phrase = region['phrase'].rstrip('\n')
-                f.write(f"{phrase}\n")
+                f.write(f"<e>{phrase}</e>\n")
         f.write(f"</a>\n")
     print(f">> DATA: VISUAL GENOME EXTRACTING: extracted {c} situations.\n")
 
@@ -69,9 +69,10 @@ def extract_qa_for_training(fpath, activity=None):
             for qa in qas:
                 question = qa['question']
                 answer = qa['answer']
+                idx = qa['image_id']
                 if len(answer.split()) > 3:
                     if activity == 'skt':
-                        f.write(f"<a type=SKT>\n")
+                        f.write(f"<a type=SKT idx={idx}>\n")
                         f.write(f"<u speaker=HUM>{question}</u>\n<u speaker=BOT>{answer}</u>\n")
                         f.write(f"</a>\n")
                     c+=1
@@ -80,6 +81,7 @@ def extract_qa_for_training(fpath, activity=None):
 
 qapath = 'question_answers.json.zip'
 rdpath = 'region_descriptions.json.zip'
-#download_vg(rdpath)
-#extract_qa_for_training(qapath,'skt')
+download_vg(qapath)
+download_vg(rdpath)
+extract_qa_for_training(qapath,'skt')
 extract_rd_for_training(rdpath,'obs')
