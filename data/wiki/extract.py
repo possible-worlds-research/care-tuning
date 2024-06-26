@@ -25,4 +25,6 @@ def get_all_categories():
     catprocessor = CatProcessor(lang)
     catprocessor.get_categories()
 
-download_dump()
+#download_dump()
+categories = ["Vegetables"]
+download_categories(categories)
