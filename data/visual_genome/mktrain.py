@@ -3,12 +3,11 @@ import re
 from random import shuffle
 
 def read_qa(fpath):
+    typ = 'TLK'
     activities = {}
     with open(fpath, encoding='utf-8') as fin:
         for l in fin:
             if l.startswith('<a type'):
-                m = re.search('type=(...)',l)
-                typ = m.group(1)
                 m = re.search('idx=([^>]*)',l)
                 idx = m.group(1)
                 activities[idx] = f'<a type={typ}>\n'
@@ -17,6 +16,7 @@ def read_qa(fpath):
     return activities
 
 def read_obs(fpath, object_memory=10000):
+    typ = 'OBS'
     activities = {}
     memory = []
     idx = 0
@@ -29,8 +29,6 @@ def read_obs(fpath, object_memory=10000):
                     activities[idx] += ''.join(memory)
                     activities[idx] += '</a>\n'
                     memory.clear()
-                m = re.search('type=(...)',l)
-                typ = m.group(1)
                 m = re.search('idx=([^>]*)',l)
                 idx = m.group(1)
                 activities[idx] = f'<a type={typ}>\n'

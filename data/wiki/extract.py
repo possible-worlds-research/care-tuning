@@ -1,3 +1,4 @@
+import sys
 from wikinlp.downloader import Downloader
 from wikinlp.categories import CatProcessor
     
@@ -25,6 +26,15 @@ def get_all_categories():
     catprocessor = CatProcessor(lang)
     catprocessor.get_categories()
 
+def get_user_categories():
+    fpath = sys.argv[1]
+    categories = []
+    with open(fpath, encoding="utf-8") as fin:
+        for l in fin:
+            categories.append(l.split(':')[0])
+    return categories
+
 #download_dump()
-categories = ["Vegetables"]
+#get_all_categories()
+categories = get_user_categories()
 download_categories(categories)
